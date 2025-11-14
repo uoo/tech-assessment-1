@@ -7,6 +7,7 @@ import dateutil.parser
 from argparse import ArgumentParser
 from pathlib import Path
 
+# iterator to parse and provide rows of readings from an input stream
 class InputStream:
     def __init__(self, response):
         self.reader = csv.DictReader(response.iter_lines(decode_unicode=True))
@@ -24,6 +25,7 @@ class InputStream:
         return row
 
 
+# iterator to return results from a collection of streams, ordered by time
 class Multi:
     def __init__(self, streams):
         # initialize sorted list of data
@@ -70,6 +72,7 @@ class Multi:
         return sorted(array, key=lambda r: r['row']['timestamp'])
 
 
+# overall class to process data
 class Process:
     def __init__(self):
         argparser = ArgumentParser(description="fetch and summarize medical data")
@@ -87,13 +90,16 @@ class Process:
         if self.args.outfile is None:
             self.args.outfile = Path(f"{self.exportID}.json")
 
+    # create URL to point to server API endpoint
     def mkapiurl(self, path):
         return f"{self.args.url}/api/{path}"
 
+    # print error message and exit with non-zero status code
     def error(self, message):
         print(message)
         exit(1)
 
+    # fetch data from response with error checking
     @staticmethod
     def getdata(response, path):
         json = response.json()
@@ -108,6 +114,7 @@ class Process:
 
         return data[path]
 
+    # perform get request to API path
     def get(self, path, stream=False):
         response = requests.get(self.mkapiurl(path), stream=stream)
 
@@ -116,12 +123,14 @@ class Process:
 
         return response
 
+    # print message if verbose is enabled
     def vprint(self, msg):
         if not self.args.verbose:
             return
 
         print(msg)
 
+    # write a record of patient data to output file
     def writedata(self, patient_id, data):
         if self.firstpatient:
             self.firstpatient = False
@@ -134,9 +143,11 @@ class Process:
         self.write(f'    "{patient_id}":', end='')
         self.write(json.dumps(data, indent=2), end='')
 
+    # send a string to the output file
     def write(self, msg, end='\n'):
         print(msg, file=self.ofp, end=end)
 
+    # entry point to actuall process data
     def process(self):
         # initialize field counts
         response = self.get("export")
@@ -157,11 +168,12 @@ class Process:
         counts = {}
         self.firstpatient = True
 
-        # set up output file for writing
+        # set up output file for writing and write header
         self.ofp = self.args.outfile.open("w")
         self.write('{')
         self.write('  "patients": {')
 
+        # compute max number of patients to accumulate data for at once
         if self.args.npatients is None:
             # no number of patients specified, use number of download IDs
             npatients = len(download_ids)
@@ -182,20 +194,23 @@ class Process:
         # instantiate time-sorted multi-stream
         multi = Multi(istreams)
 
+        # process patient data
         patients = {}
         nrows = 0
 
+        # iterate through all rows from all datastreams
         for row in multi:
-            patient_id = row["patient_id"]
-
+            # count readings
             if row["event_type"] not in counts:
                 counts[row["event_type"]] = 0
 
             counts[row["event_type"]] += 1
                 
             nrows += 1
+            patient_id = row["patient_id"]
 
             if patient_id in patients:
+                # we already have data for this patient
                 if row["event_type"] in patients[patient_id]:
                     # duplicate event for same patient: emit previous row
                     self.writedata(patient_id, patients[patient_id])
@@ -224,11 +239,9 @@ class Process:
                             opt = pt
 
                     # emit that record
-
                     self.writedata(opt, patients[opt])
 
                     # remove from dict
-
                     del patients[opt]
 
                 # start new record
@@ -237,7 +250,7 @@ class Process:
                     "timestamp": row["timestamp"],
                 }
                     
-        # write final records
+        # read all data, write final records
 
         for pt, data in patients.items():
             self.writedata(pt, data)
